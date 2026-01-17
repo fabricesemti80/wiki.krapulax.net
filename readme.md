@@ -1,5 +1,3 @@
-# Readme
-
 # Homelab Architecture Documentation
 
 Welcome to the documentation for my homelab setup. This repository contains detailed documentation of the physical and virtual infrastructure, network configurations, and services running in the homelab environment.
