@@ -50,7 +50,7 @@ Create the two config files below (loki.yaml, promtail.yaml) inside it.
 
 Run the deploy command from that directory.
 
-### loki
+### Loki
 Optimized for Homelab: Filesystem storage, TSDB index (modern/fast), and 14-day retention.
 
 ```sh
