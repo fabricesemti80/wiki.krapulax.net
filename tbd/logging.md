@@ -1,4 +1,4 @@
-# Logging
+# Local stack
 
 ```mermaid
 graph TD
@@ -36,25 +36,24 @@ graph TD
 
 - Network: All components communicate over a private overlay network (monitoring).
 
-## Config
+# Self-Hosted PLG Stack (Loki, Promtail, Grafana) for Docker Swarm
 
-**Complete Docker Swarm Stack**
+This setup is optimized for a 3-5 node homelab cluster. It keeps logs locally (filesystem), retains them for 14 days, and uses minimal resources (~2GB RAM total).
 
-To keep your setup clean, we will use Docker Configs. This allows you to deploy the entire stack without manually copying configuration files to every single node.
+## 1. Architecture Overview
 
-Prerequisites:
+* **Promtail (Global):** Runs on *every* node to collect logs from `/var/lib/docker/containers`.
+* **Loki (Pinned):** Runs on the **Manager** node. Using a placement constraint allows us to use simple local volumes instead of complex S3/Object storage.
+* **Grafana (Pinned):** Runs on the **Manager** node for visualization.
 
-Create a directory (e.g., monitoring).
+## 2. Deployment Configuration
 
-Create the two config files below (loki.yaml, promtail.yaml) inside it.
+Create a directory (e.g., `monitoring`) and add the following three files.
 
-Run the deploy command from that directory.
+### A. `loki.yaml` (The Aggregator Config)
+*Configured for local filesystem storage with 14-day retention.*
 
-### Loki
-Optimized for Homelab: Filesystem storage, TSDB index (modern/fast), and 14-day retention.
-
-```sh
-# loki.yaml
+```yaml
 auth_enabled: false
 
 server:
@@ -102,12 +101,10 @@ limits_config:
   retention_period: 336h # 14 Days (24 * 14)
 ```
 
-### Promtail
+### B. `promtail.yaml` (The Agent Config)
+*Configured to auto-discover Swarm Service and Stack names.*
 
-Optimized for Swarm: Automatically discovers Service Names and Stack Names.
-
-```sh
-#promtail.yaml
+```yaml
 server:
   http_listen_port: 9080
   grpc_listen_port: 0
@@ -125,26 +122,26 @@ scrape_configs:
         refresh_interval: 5s
         
     relabel_configs:
-      # 1. Keep only containers that have a name (filters out some internal noise)
+      # 1. Keep only containers that have a name
       - source_labels: ['__meta_docker_container_name']
         regex: '/(.*)'
         target_label: 'container_name'
       
-      # 2. Extract the Swarm Service Name (e.g., "mystack_nginx")
+      # 2. Extract Swarm Service Name
       - source_labels: ['__meta_docker_container_label_com_docker_swarm_service_name']
         target_label: 'service'
       
-      # 3. Extract the Swarm Stack Name (e.g., "mystack")
+      # 3. Extract Swarm Stack Name
       - source_labels: ['__meta_docker_container_label_com_docker_stack_namespace']
         target_label: 'stack'
 
     pipeline_stages:
       - docker: {}
 ```
-### Docker compose
 
-```sh
-# docker-compose.yml
+### C. `docker-compose.yml` (The Stack Definition)
+
+```yaml
 version: "3.8"
 
 services:
@@ -174,9 +171,7 @@ services:
     networks:
       - monitoring
     volumes:
-      # Mount the Docker Socket so Promtail can find containers
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      # Mount the actual log files so Promtail can read them
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
     configs:
       - source: promtail_config
@@ -216,14 +211,26 @@ configs:
     file: ./loki.yaml
   promtail_config:
     file: ./promtail.yaml
-```    
+```
 
-## Source References & Further Reading
+## 3. How to Deploy
 
-- Loki Storage & Retention: Official guide on how the Compactor handles retention for local filesystem storage.
+1.  Navigate to the directory containing the 3 files.
+2.  Deploy the stack:
+    ```bash
+    docker stack deploy -c docker-compose.yml plg_stack
+    ```
+3.  Wait ~60 seconds for Loki to initialize.
+4.  Access Grafana at `http://<MANAGER_IP>:3000` (User: `admin` / Pass: `admin`).
 
-    Reference: [Grafana Loki Retention Documentation](https://grafana.com/docs/loki/latest/operations/storage/retention/)
+## 4. Post-Install Configuration
 
-- Promtail Service Discovery: Details on using docker_sd_configs to discover Swarm containers via the socket.
-
-    Reference: [Promtail Configuration](https://grafana.com/docs/loki/latest/send-data/promtail/configuration/)
+1.  **Add Data Source:**
+    * In Grafana, go to **Connections** > **Data Sources** > **Add data source**.
+    * Select **Loki**.
+    * URL: `http://loki:3100`
+    * Click **Save & Test**.
+2.  **Verify:**
+    * Go to **Explore**.
+    * Select **Loki** from the top-left dropdown.
+    * Run query: `{stack="plg_stack"}` to see logs streaming.
